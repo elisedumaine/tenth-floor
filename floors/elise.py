@@ -1,7 +1,8 @@
 """Art History Center, 4th floor: the reading room, the slide and archive room, the conservation studio,
-then the lecture room.
+the lecture room, then the immersive Van Gogh projection room.
 
-West elevator -> Reading Room -> Slide and Archive Room -> Conservation Studio -> Lecture Room -> East elevator.
+West elevator -> Reading Room -> Slide and Archive Room -> Conservation Studio -> Lecture Room
+-> Immersive Van Gogh -> East elevator.
 The digit is in the archive box up on the top shelf of the Slide and Archive Room: ride the lift up to it,
 and watch the crusher (the archive's book press).
 """
@@ -11,8 +12,8 @@ import random
 import pygame
 
 from engine import config as C
-from engine.kit import (Bookshelf, CeilingLight, Crusher, Desk, Drone, FilingCabinet, FloorLaser, PatrolBot,
-                        Plant, Poster, Sign, Window)
+from engine.kit import (Bookshelf, CeilingLight, Crusher, Desk, Drone, FilingCabinet, FloorLaser,
+                        MovingPlatform, PatrolBot, Plant, Poster, Sign, Window)
 from engine.room import Furniture, Lift, Platform, Room
 
 NAME = "Art History Center"     # the name on the elevator panel
@@ -680,6 +681,380 @@ class UVLamp:
         pygame.draw.rect(surf, (200, 140, 255) if self.on else (80, 60, 100), (x - 9, 80, 18, 4))
 
 
+# --- paintings that come alive ---
+
+class MonaLisa(Painting):
+    """The Mona Lisa, whose eyes follow you around the room. Closer, and she smiles a little more."""
+
+    def __init__(self, x, y, w, h):
+        super().__init__(x, y, w, h, "mona lisa")
+        self.x, self.y, self.w, self.h = x, y, w, h
+        self.look = (0.0, 0.0)
+        self.near = False
+        self.t = 0.0
+        self.bubbles = [make_bubble(pygame.font.Font(None, 20), line)
+                        for line in ("...I see you.", "Leonardo never finished me, you know.")]
+        self.head_y = y + 20
+
+    def update(self, dt, player):
+        self.t += dt
+        if player is None:
+            return
+        r = player.rect
+        dx = max(-1.0, min(1.0, (r.centerx - (self.x + self.w / 2)) / 300))
+        dy = max(-1.0, min(1.0, (r.centery - (self.y + self.h * 0.3)) / 300))
+        self.look = (dx, dy)
+        self.near = abs(r.centerx - (self.x + self.w / 2)) < 110
+
+    def draw(self, surf):
+        super().draw(surf)
+        for ex in (0.44, 0.56):                     # repaint the eyes, looking at you
+            cx, cy = int(self.x + self.w * ex), int(self.y + self.h * 0.3)
+            pygame.draw.ellipse(surf, (236, 226, 200), (cx - 4, cy - 2, 8, 5))
+            pygame.draw.circle(surf, (50, 34, 24), (cx + round(self.look[0] * 2), cy + round(self.look[1])), 2)
+        if self.near:                               # the famous smile, a bit wider
+            mx, my = int(self.x + self.w * 0.5), int(self.y + self.h * 0.4)
+            pygame.draw.arc(surf, (120, 60, 40), (mx - 9, my - 3, 18, 8), 3.4, 6.0, 2)
+
+    def draw_bubble(self, surf):
+        if self.near:
+            b = self.bubbles[int(self.t / 2.8) % len(self.bubbles)]
+            surf.blit(b, (self.x + self.w // 2 - b.get_width() // 2, self.y - b.get_height() - 4))
+
+
+class LivingScream(Painting):
+    """The Scream, which screams when you walk up to it."""
+
+    def __init__(self, x, y, w, h):
+        super().__init__(x, y, w, h, "scream")
+        self.x, self.y, self.w, self.h = x, y, w, h
+        self.near = False
+        self.t = 0.0
+        self.bubble = make_bubble(pygame.font.Font(None, 26), "AAAAAAAH!!")
+
+    def update(self, dt, player):
+        self.t += dt
+        self.near = player is not None and abs(player.rect.centerx - (self.x + self.w / 2)) < 90
+
+    def draw(self, surf):
+        if not self.near:
+            super().draw(surf)
+            return
+        shake = int(3 * math.sin(self.t * 40))
+        surf.blit(self.image, (self.x + shake, self.y))
+        mx, my = int(self.x + shake + self.w * 0.47), int(self.y + self.h * 0.6)
+        open_ = 6 + int(3 * abs(math.sin(self.t * 12)))
+        pygame.draw.ellipse(surf, (30, 20, 20), (mx - 4, my - open_ // 2, 9, open_ + 4))
+
+    def draw_bubble(self, surf):
+        if self.near:
+            surf.blit(self.bubble, (self.x + self.w // 2 - self.bubble.get_width() // 2, self.y - self.bubble.get_height() - 4))
+
+
+# --- the immersive Van Gogh room ---
+
+class VanGogh(Person):
+    """Vincent himself: straw hat, red beard, blue coat, and a bandage over one ear."""
+
+    def draw(self, surf):
+        super().draw(surf)
+        hx, hy = self.x + 12, self.head_y
+        pygame.draw.ellipse(surf, (200, 100, 40), (hx - 7, hy + 1, 14, 10))            # the red beard
+        pygame.draw.ellipse(surf, (230, 200, 90), (hx - 14, hy - 10, 28, 7))           # straw hat brim
+        pygame.draw.rect(surf, (230, 200, 90), (hx - 7, hy - 16, 14, 8), border_radius=3)
+        pygame.draw.rect(surf, (245, 245, 245), (hx - 9, hy - 4, 5, 8))                 # the bandaged ear
+
+
+class VanGoghChair(Furniture):
+    """The yellow chair from "Van Gogh's Chair" (1888), with his pipe on the seat."""
+
+    def __init__(self, x, y, name="Van Gogh's chair", holds_piece=False, w=50, h=70):
+        super().__init__(x, y, w, h, name, holds_piece)
+
+    def draw(self, surf):
+        r = self.rect
+        wood = (220, 170, 60) if not self.searched else (150, 130, 90)
+        for x in (r.left + 4, r.right - 9):
+            pygame.draw.rect(surf, wood, (x, r.top, 5, r.h))
+        for y in range(r.top + 6, r.top + 34, 9):
+            pygame.draw.line(surf, wood, (r.left + 4, y), (r.right - 4, y), 3)
+        pygame.draw.rect(surf, (200, 160, 70), (r.left, r.top + 38, r.w, 8))          # rush seat
+        pygame.draw.line(surf, (60, 40, 30), (r.left + 14, r.top + 36), (r.left + 30, r.top + 34), 3)   # the pipe
+        pygame.draw.rect(surf, C.INK, r, 1)
+
+
+class ArlesBed(Furniture):
+    """The red-blanket bed from "The Bedroom" in Arles (1888)."""
+
+    def __init__(self, x, y, name="the bed from The Bedroom", holds_piece=False, w=120, h=56):
+        super().__init__(x, y, w, h, name, holds_piece)
+
+    def draw(self, surf):
+        r = self.rect
+        wood = (200, 140, 60) if not self.searched else (140, 120, 100)
+        pygame.draw.rect(surf, wood, (r.left, r.top, 10, r.h))                          # headboard
+        pygame.draw.rect(surf, wood, (r.right - 8, r.top + 18, 8, r.h - 18))            # footboard
+        pygame.draw.rect(surf, (200, 50, 40), (r.left + 10, r.top + 22, r.w - 18, 18))  # the red blanket
+        pygame.draw.rect(surf, (236, 236, 200), (r.left + 12, r.top + 16, 26, 10), border_radius=3)   # pillow
+        pygame.draw.rect(surf, wood, (r.left + 10, r.top + 40, r.w - 18, 6))
+        pygame.draw.rect(surf, C.INK, r, 1)
+
+
+class PortraitEasel(Furniture):
+    """An easel with one of Van Gogh's self-portraits on it."""
+
+    def __init__(self, x, y, name="self-portrait easel", holds_piece=False, w=70, h=110):
+        super().__init__(x, y, w, h, name, holds_piece)
+
+    def draw(self, surf):
+        r = self.rect
+        wood = (140, 100, 60) if not self.searched else (110, 100, 90)
+        pygame.draw.line(surf, wood, (r.left + 8, r.bottom), (r.centerx, r.top), 4)
+        pygame.draw.line(surf, wood, (r.right - 8, r.bottom), (r.centerx, r.top), 4)
+        art = pygame.Rect(r.left + 6, r.top + 10, r.w - 12, 60)
+        pygame.draw.rect(surf, (70, 120, 150), art)                                    # swirly blue background
+        for k in range(3):
+            pygame.draw.arc(surf, (110, 160, 190), art.inflate(-8 - k * 12, -8 - k * 10), 0, 4.5, 2)
+        pygame.draw.ellipse(surf, (220, 170, 120), (art.centerx - 9, art.top + 12, 18, 24))   # face
+        pygame.draw.ellipse(surf, (200, 100, 40), (art.centerx - 8, art.top + 26, 16, 12))    # beard
+        pygame.draw.rect(surf, (50, 80, 160), (art.left + 8, art.bottom - 14, art.w - 16, 14))
+        pygame.draw.rect(surf, (176, 140, 60), art, 3)
+        pygame.draw.rect(surf, wood, (r.left + 2, art.bottom, r.w - 4, 5))
+
+
+class ShootingStar:
+    """A hazard of my own: a star that falls out of the painted sky, now and then, at a slant."""
+
+    def __init__(self, xs, period=2.6, offset=0.0, speed=(-170, 320)):
+        self.xs, self.period, self.speed = xs, period, speed
+        self.t = offset
+        self.n = 0
+        self.rect = pygame.Rect(0, 0, 0, 0)
+        self.pos = None
+
+    def update(self, dt, room, player):
+        self.t += dt
+        if self.t >= self.period:
+            self.t -= self.period
+            self.n += 1
+        fall = self.t - 1.0                         # it twinkles for a second, then drops
+        x0 = self.xs[self.n % len(self.xs)]
+        if fall < 0:
+            self.pos, self.rect = (x0, 40), pygame.Rect(0, 0, 0, 0)
+            return
+        x, y = x0 + self.speed[0] * fall, 40 + self.speed[1] * fall
+        if y > C.FLOOR_Y:
+            self.pos, self.rect = None, pygame.Rect(0, 0, 0, 0)
+            return
+        self.pos = (x, y)
+        self.rect = pygame.Rect(int(x) - 8, int(y) - 8, 16, 16)
+
+    def draw(self, surf):
+        if self.pos is None:
+            return
+        x, y = int(self.pos[0]), int(self.pos[1])
+        if self.rect.w == 0:                        # about to fall: blinking warning
+            if int(self.t * 8) % 2 == 0:
+                pygame.draw.circle(surf, (255, 240, 150), (x, y), 6, 2)
+            return
+        tail = (x - self.speed[0] // 6, y - self.speed[1] // 6)
+        pygame.draw.line(surf, (255, 220, 120), (x, y), tail, 4)
+        pygame.draw.line(surf, (255, 250, 220), (x, y), ((x + tail[0]) // 2, (y + tail[1]) // 2), 2)
+        for a in range(0, 360, 72):
+            pygame.draw.line(surf, (255, 240, 150), (x, y),
+                             (x + math.cos(math.radians(a + self.t * 400)) * 10, y + math.sin(math.radians(a + self.t * 400)) * 10), 3)
+        pygame.draw.circle(surf, (255, 255, 230), (x, y), 5)
+
+
+# --- animals and people who walk around ---
+# They work like Person: put them in self.people AND self.decor. Only to look at: they never hurt you.
+
+class Dog:
+    """A little dog who trots around the room, stops to sniff, wags its tail, and barks hello when you're close.
+
+    x is where it starts, y the surface it walks on, left..right how far it roams. color, ear: its coat.
+    """
+
+    def __init__(self, x, y, left, right, color=(200, 150, 90), ear=(140, 90, 50), name="Woof!", speed=60):
+        self.x, self.y, self.left, self.right, self.speed = float(x), y, left, right, speed
+        self.color, self.ear = color, ear
+        self.dir = 1
+        self.t = (x * 0.13) % 2
+        self.pause = 0.0
+        self.near = False
+        font = pygame.font.Font(None, 20)
+        self.bubbles = [make_bubble(font, line) for line in (name, "*wags tail*", "Woof woof!")]
+
+    @property
+    def head_y(self):
+        return self.y - 20
+
+    def update(self, dt, player):
+        self.t += dt
+        self.near = player is not None and abs(player.rect.centerx - self.x) < 90 and abs(player.rect.bottom - self.y) < 60
+        if self.near:                               # it stops and looks at you
+            if player.rect.centerx != int(self.x):
+                self.dir = 1 if player.rect.centerx > self.x else -1
+            return
+        if self.pause > 0:                          # sniffing something
+            self.pause -= dt
+            return
+        self.x += self.dir * self.speed * dt
+        if self.x < self.left or self.x > self.right:
+            self.dir *= -1
+            self.x = max(self.left, min(self.right, self.x))
+        if int(self.t * 10) % 37 == 0:              # now and then, stop and sniff
+            self.pause = 1.2
+
+    def draw(self, surf):
+        x, y, d = int(self.x), self.y, self.dir
+        walking = self.pause <= 0 and not self.near
+        step = int(3 * math.sin(self.t * 14)) if walking else 0
+        sniff = 3 if self.pause > 0 else 0
+        for lx, s in ((-9, step), (-4, -step), (5, step), (10, -step)):           # four legs
+            pygame.draw.line(surf, self.ear, (x + lx * d, y - 8), (x + lx * d + s, y), 3)
+        pygame.draw.ellipse(surf, self.color, (x - 14, y - 18, 28, 12))           # body
+        wag = int(5 * math.sin(self.t * (20 if self.near else 8)))
+        pygame.draw.line(surf, self.color, (x - 13 * d, y - 15), (x - 19 * d, y - 22 + wag), 3)   # tail
+        hx, hy = x + 14 * d, y - 20 + sniff
+        pygame.draw.circle(surf, self.color, (hx, hy), 7)                           # head
+        pygame.draw.ellipse(surf, self.color, (hx + (2 if d > 0 else -10), hy - 1, 8, 6))          # snout
+        pygame.draw.circle(surf, C.INK, (hx + 9 * d, hy + 1), 2)                    # nose
+        pygame.draw.circle(surf, C.INK, (hx + 2 * d, hy - 2), 1)                    # eye
+        pygame.draw.ellipse(surf, self.ear, (hx - 5 * d - 3, hy - 5, 6, 10))       # floppy ear
+        if self.near:
+            pygame.draw.line(surf, (220, 80, 90), (hx + 6 * d, hy + 4), (hx + 7 * d, hy + 8), 2)   # tongue out
+
+    def draw_bubble(self, surf):
+        if not self.near:
+            return
+        b = self.bubbles[int(self.t / 1.6) % len(self.bubbles)]
+        bx = max(4, min(C.W - b.get_width() - 4, int(self.x) - b.get_width() // 2))
+        surf.blit(b, (bx, self.head_y - 14 - b.get_height()))
+
+
+class Walker(Person):
+    """A Person who strolls back and forth between left and right, and stops to chat when you're close."""
+
+    def __init__(self, x, y, left, right, speed=40, **kw):
+        super().__init__(x, y, pose="stand", **kw)
+        self.left, self.right, self.speed = left, right, speed
+        self.fx = float(x)
+
+    def update(self, dt, player):
+        super().update(dt, player)
+        if self.near:
+            if player is not None:
+                self.facing = 1 if player.rect.centerx > self.x + 12 else -1
+            self.pose = "talk"
+            return
+        self.pose = "stand"
+        self.fx += self.facing * self.speed * dt
+        if self.fx < self.left or self.fx > self.right:
+            self.facing *= -1
+            self.fx = max(self.left, min(self.right, self.fx))
+        self.x = int(self.fx)
+
+    def draw(self, surf):
+        if self.pose == "stand":                    # a little walking bob
+            self.pose = "talk" if int(self.t * 4) % 2 else "stand"
+            super().draw(surf)
+            self.pose = "stand"
+        else:
+            super().draw(surf)
+
+
+class GiantVanGogh:
+    """A giant, flickering projection of Van Gogh's face across the night sky. His glowing eyes follow you
+    around the room; come close and they turn red and he speaks. Only to look at (and be scared of)."""
+
+    W, H = 280, 330
+
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+        self.t = 0.0
+        self.look = (0.0, 0.0)
+        self.near = False
+        rng = random.Random(1889)
+        face = pygame.Surface((self.W, self.H), pygame.SRCALPHA)       # painted once, in brush strokes
+
+        def strokes(rect, colors, n, length=10, width=3):
+            for _ in range(n):
+                sx = rng.randint(rect[0], rect[0] + rect[2])
+                sy = rng.randint(rect[1], rect[1] + rect[3])
+                a = rng.uniform(0, math.pi)
+                pygame.draw.line(face, rng.choice(colors), (sx, sy),
+                                 (sx + math.cos(a) * length, sy + math.sin(a) * length), width)
+
+        pygame.draw.ellipse(face, (40, 60, 130), (0, 250, self.W, 160))                  # his blue coat
+        strokes((10, 262, 260, 60), [(60, 90, 170), (30, 50, 110), (80, 120, 190)], 70, 14, 4)
+        pygame.draw.ellipse(face, (210, 150, 100), (60, 50, 160, 210))                   # face
+        strokes((80, 70, 120, 150), [(190, 130, 90), (120, 150, 100), (230, 170, 120)], 90, 8, 3)
+        pygame.draw.ellipse(face, (200, 100, 40), (70, 170, 140, 110))                   # the red beard
+        strokes((80, 180, 120, 90), [(230, 120, 50), (170, 70, 30), (240, 150, 70)], 80, 9, 3)
+        pygame.draw.ellipse(face, (210, 150, 100), (112, 180, 56, 30))                  # around the mouth
+        pygame.draw.ellipse(face, (200, 170, 70), (10, 20, 260, 46))                     # straw hat brim
+        pygame.draw.rect(face, (200, 170, 70), (70, 0, 140, 44), border_radius=14)
+        strokes((20, 4, 240, 54), [(230, 200, 90), (170, 140, 50)], 60, 12, 3)
+        pygame.draw.rect(face, (245, 245, 240), (48, 120, 22, 56), border_radius=6)     # the bandaged ear
+        for sx in (92, 148):                                                             # deep eye sockets
+            pygame.draw.ellipse(face, (40, 26, 40), (sx, 108, 44, 30))
+        pygame.draw.line(face, (140, 60, 30), (88, 96), (134, 112), 7)                  # angry brows
+        pygame.draw.line(face, (140, 60, 30), (196, 96), (150, 112), 7)
+        pygame.draw.line(face, (150, 90, 60), (140, 130), (132, 168), 4)                # nose
+        pygame.draw.line(face, (150, 90, 60), (132, 168), (146, 170), 4)
+        self.face = face
+        big = pygame.font.Font(None, 28)
+        self.bubbles = [make_bubble(big, line) for line in
+                        ("Who goes there...?", "You can't escape my sky...", "Give... me... back... my... EAR!")]
+
+    @property
+    def head_y(self):
+        return self.y
+
+    def update(self, dt, player):
+        self.t += dt
+        if player is None:
+            self.near = False
+            return
+        r = player.rect
+        ex, ey = self.x + self.W / 2, self.y + 122
+        dx, dy = r.centerx - ex, r.centery - ey
+        dist = max(1.0, math.hypot(dx, dy))
+        self.look = (dx / dist, dy / dist)
+        self.near = abs(dx) < 200
+
+    def draw(self, surf):
+        t = self.t
+        alpha = 150 + int(50 * math.sin(t * 1.3))
+        if int(t * 6) % 23 == 0:                    # the projector glitches now and then
+            alpha = 60
+        self.face.set_alpha(alpha)
+        surf.blit(self.face, (self.x, self.y))
+        blink = (t % 4.0) < 0.15
+        for sx in (92, 148):
+            cx, cy = self.x + sx + 22, self.y + 123
+            if blink:
+                pygame.draw.line(surf, (60, 40, 50), (cx - 18, cy), (cx + 18, cy), 4)
+                continue
+            pygame.draw.ellipse(surf, (250, 236, 160), (cx - 16, cy - 10, 32, 20))      # glowing eyes
+            px, py = cx + int(self.look[0] * 9), cy + int(self.look[1] * 5)
+            pygame.draw.circle(surf, (200, 30, 30) if self.near else (30, 20, 20), (px, py), 7)
+            pygame.draw.circle(surf, (255, 255, 255), (px - 2, py - 2), 2)
+        mx, my = self.x + 140, self.y + 195
+        if self.near:                               # he speaks
+            open_ = 10 + int(8 * abs(math.sin(t * 6)))
+            pygame.draw.ellipse(surf, (40, 10, 20), (mx - 22, my - open_ // 2, 44, open_))
+        else:
+            pygame.draw.arc(surf, (120, 50, 30), (mx - 20, my - 4, 40, 14), 0.3, 2.8, 3)   # a frown
+
+    def draw_bubble(self, surf):
+        if not self.near:
+            return
+        b = self.bubbles[int(self.t / 2.4) % len(self.bubbles)]
+        surf.blit(b, (self.x + self.W // 2 - b.get_width() // 2, self.y + self.H - 40))
+
+
 class PeopleRoom(Room):
     """A room with people in it: they move and talk; their speech bubbles go over everything."""
 
@@ -701,13 +1076,15 @@ class ReadingRoom(PeopleRoom):
 
     def build(self):
         self.decor += [Sign(370, 46, "READING ROOM", (230, 200, 140)), CeilingLight(250), CeilingLight(700),
-                       Window(640, 80, seed=4), Painting(120, 90, 90, 130, "mona lisa"),
+                       Window(640, 80, seed=4),
                        Painting(240, 110, 110, 80, "night"), Painting(470, 110, 80, 100, "pearl")]
         self.platforms.append(Platform(380, 400, 200))
         self.furniture += [Bookshelf(130, C.FLOOR_Y), Bookshelf(420, 400), Desk(640, C.FLOOR_Y, "study desk"),
                            Plant(800, C.FLOOR_Y), Sculpture(260, C.FLOOR_Y, "bust")]
         self.hazards.append(PatrolBot(300, C.FLOOR_Y, left=200, right=780, speed=70))
         self.people = [
+            MonaLisa(120, 90, 90, 130),
+            Dog(330, C.FLOOR_Y, left=230, right=760, name="Woof! (it's Leonardo's dog)"),
             Person(512, 400, "read", shirt=(150, 70, 90), hair=(120, 70, 30), seated=True, facing=-1,
                    lines=["Shh... this is a library.", "Vermeer used real ultramarine. So pricey!"]),
             Person(608, C.FLOOR_Y, "type", shirt=(60, 130, 110), hair=(20, 20, 20), skin=(190, 140, 100), seated=True,
@@ -743,6 +1120,8 @@ class SlideArchive(PeopleRoom):
             Person(784, C.FLOOR_Y, "stand", shirt=(110, 100, 80), hair=(200, 200, 200), facing=-1,
                    lines=["Careful, these slides are from 1965!", "The rare boxes are on the top shelf.",
                           "That press up there? Wait for it to rise."]),
+            Dog(700, C.FLOOR_Y, left=600, right=840, color=(60, 60, 60), ear=(30, 30, 30),
+                name="Woof! (the archivist's dog)", speed=40),
         ]
         self.decor += self.people
         self.hazards.append(FloorLaser(200, 520, on_time=1.2, off_time=1.6))
@@ -782,6 +1161,8 @@ class ConservationStudio(PeopleRoom):
                           "Someone dropped David. Again."]),
             Person(720, C.FLOOR_Y, "type", shirt=(240, 240, 236), hair=(30, 30, 30), skin=(200, 150, 110), facing=-1,
                    lines=["I'm just the intern!", "Is it bad if I glued his arm on backwards?"]),
+            Walker(300, C.FLOOR_Y, left=280, right=760, shirt=(170, 60, 60), hair=(230, 200, 120),
+                   lines=["Is this a real Van Gogh?", "I'm the museum's night guide!"]),
         ]
         self.decor += self.people
 
@@ -795,12 +1176,13 @@ class LectureRoom(PeopleRoom):
 
     def build(self):
         self.decor += [Sign(380, 46, "LECTURE ROOM", (240, 220, 180)), ProjectorScreen(120, 90, 260, 170),
-                       Poster(430, 100, "ART HIST", (130, 60, 70), w=96), Painting(545, 110, 80, 110, "scream"), CeilingLight(620), CeilingLight(820)]
+                       Poster(430, 100, "ART HIST", (130, 60, 70), w=96), CeilingLight(620), CeilingLight(820)]
         self.platforms.append(Platform(560, 440, 140))      # the tiered seats
         self.platforms.append(Platform(690, 380, 140))
         self.furniture += [Plant(100, C.FLOOR_Y), Lectern(300, C.FLOOR_Y), Seats(575, 440), Seats(710, 380),
                            Sculpture(480, C.FLOOR_Y, "venus")]
         self.people = [
+            LivingScream(545, 110, 80, 110),
             Person(250, C.FLOOR_Y, "talk", shirt=(70, 70, 80), hair=(90, 90, 90), always=True,
                    lines=["...and Mondrian painted this in 1921.", "Notice the primary colors.", "Quiz on Thursday!"]),
             Person(575, 430, "stand", shirt=(200, 140, 60), hair=(60, 40, 20), seated=True, chair=False, facing=-1,
@@ -819,4 +1201,71 @@ class LectureRoom(PeopleRoom):
         pygame.draw.rect(surf, (54, 50, 62), (0, 300, C.W, C.FLOOR_Y - 300))
 
 
-ROOMS = [ReadingRoom, SlideArchive, ConservationStudio, LectureRoom]
+class ImmersiveVanGogh(PeopleRoom):
+    """A projection room where The Starry Night fills the walls and moves, and a giant Van Gogh watches you.
+    Watch for falling stars."""
+
+    title = "Immersive Van Gogh"
+    dark = 0.15                                     # the projection lights the room
+
+    STARS = [(110, 90), (230, 60), (380, 70), (640, 64), (930, 150)]
+
+    def build(self):
+        self.decor.append(Sign(330, 20, "IMMERSIVE VAN GOGH", (250, 230, 140)))
+        self.platforms += [Platform(150, 400, 170), MovingPlatform(350, 560, 320, width=110, speed=60),
+                           Platform(690, 240, 180)]
+        self.furniture += [VanGoghChair(200, 400), ArlesBed(450, C.FLOOR_Y), PortraitEasel(760, 240)]
+        self.hazards += [ShootingStar([460, 720, 580, 820], period=2.6),
+                         ShootingStar([420, 660, 540], period=3.1, offset=1.3)]
+        self.people = [
+            VanGogh(800, C.FLOOR_Y, "talk", shirt=(50, 80, 160), hair=(200, 100, 40), facing=-1,
+                    lines=["Bonsoir! Welcome to my night sky.", "I painted it from my window, in 1889.",
+                           "I sold only one painting in my whole life...", "Mind the falling stars!"]),
+            Person(300, C.FLOOR_Y, "type", shirt=(230, 120, 160), hair=(240, 220, 120),
+                   lines=["This is SO going on my story.", "Wait... is that the real Van Gogh?"]),
+            Dog(400, C.FLOOR_Y, left=200, right=780, color=(230, 200, 120), ear=(180, 140, 70),
+                name="Woof! (Vincent's dog)"),
+        ]
+        self.decor += self.people
+        self.giant = GiantVanGogh(340, 40)        # drawn in the sky, behind the village; watches you
+        self.people.append(self.giant)
+        self.lights = [(840, 80, 110)] + [(x, y, 60) for x, y in self.STARS]
+        self.front = pygame.Surface((C.W, C.FLOOR_Y), pygame.SRCALPHA)      # the village and cypress, made once
+        pygame.draw.polygon(self.front, (30, 50, 90), [(0, 400), (200, 360), (420, 390), (640, 350), (960, 380),
+                                                       (960, 500), (0, 500)])
+        for i, x in enumerate(range(150, 900, 46)):
+            h = 22 + (i * 7) % 16
+            pygame.draw.rect(self.front, (40, 50, 70), (x, 470 - h, 34, h + 30))
+            pygame.draw.rect(self.front, (250, 210, 90), (x + 12, 478 - h, 7, 7))
+        pygame.draw.polygon(self.front, (40, 50, 70), [(560, 470), (574, 340), (588, 470)])   # the church spire
+        pygame.draw.polygon(self.front, (14, 30, 20), [(36, 500), (46, 330), (62, 200), (74, 110), (88, 220),
+                                                       (100, 340), (112, 500)])            # the cypress, like a flame
+        for k in range(6):
+            pygame.draw.arc(self.front, (30, 60, 40), (50, 140 + k * 55, 50, 70), 1.0, 4.0, 3)
+
+    def draw_background(self, surf):
+        t = self.time
+        surf.fill((22, 40, 100))
+        swirls = [(300, 170, 80, 1), (540, 140, 100, -1), (420, 260, 60, 1), (720, 230, 60, -1), (170, 260, 50, -1)]
+        colors = [(70, 110, 190), (110, 150, 220), (170, 200, 240)]
+        for cx, cy, r, turn in swirls:              # the sky turning, the way he painted it
+            for k in range(3):
+                start = turn * t * 0.8 + k * 2.1
+                rr = r - k * 14
+                pygame.draw.arc(surf, colors[k], (cx - rr, cy - rr * 0.6, 2 * rr, 1.2 * rr), start, start + 2.6, 5)
+        for x0 in range(-200, C.W, 260):            # the long wind across the middle
+            x = x0 + (t * 30) % 260
+            pygame.draw.arc(surf, (130, 170, 230), (x, 190, 260, 60), 0.2, 2.9, 4)
+        for i, (x, y) in enumerate(self.STARS):
+            r = 9 + int(3 * math.sin(t * 2 + i))
+            pygame.draw.circle(surf, (200, 200, 120), (x, y), r + 10, 3)
+            pygame.draw.circle(surf, (230, 220, 120), (x, y), r + 4, 2)
+            pygame.draw.circle(surf, (255, 245, 170), (x, y), r)
+        pygame.draw.circle(surf, (230, 200, 80), (840, 80), 40, 4)        # the moon
+        pygame.draw.circle(surf, (255, 220, 90), (840, 80), 26)
+        pygame.draw.circle(surf, (22, 40, 100), (852, 72), 20)
+        self.giant.draw(surf)
+        surf.blit(self.front, (0, 0))
+
+
+ROOMS = [ReadingRoom, SlideArchive, ConservationStudio, LectureRoom, ImmersiveVanGogh]

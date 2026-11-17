@@ -2,60 +2,158 @@
 
     from engine import sound
     sound.play("ding")
+    sound.ambient(True)        # the building's hum, looping quietly
 
-Names: jump, tick, found, nothing, caught, ding, locked, win, lose, zap, alarm, lunge.
-If the computer has no sound (or the check runs with none), every call quietly does nothing.
+Effects: jump, tick, found, nothing, caught, ding, locked, win, lose, zap, alarm, lunge, click.
+Each effect is made in a few slightly different takes, and play() picks one, so repeats don't sound copied.
+They're made in the background when the game starts; until a sound is ready, play() skips it. If the computer
+has no sound (or the check runs with none), every call quietly does nothing.
 """
 import math
 import random
+import threading
 from array import array
 
 import pygame
 
 RATE = 22050
-_sounds = {}
-_ready = None            # None = not tried yet, False = no sound on this machine
+TAKES = 3
+_sounds = {}             # name -> [Sound, ...]
+_ready = None            # None = not started, False = no sound on this machine, True = mixer up
+_hum = None
+_want_hum = False
 
 
-def _tone(freq, secs, wave="square", vol=0.35, slide=0.0, decay=6.0):
-    """One note: freq in Hz, sliding by `slide` Hz over its length, fading out at `decay`."""
-    n = int(RATE * secs)
-    out, phase = [], 0.0
+# --- making waves --------------------------------------------------------------------------------------------
+def _n(secs):
+    return int(RATE * secs)
+
+
+def _env(i, n, attack=0.005, decay=None):
+    """A fast attack, then an exponential fade over the whole length (or `decay` seconds)."""
+    t = i / RATE
+    a = min(1.0, t / attack) if attack > 0 else 1.0
+    d = decay if decay else max(0.02, n / RATE)
+    return a * math.exp(-4.0 * t / d)
+
+
+def _bell(freq, secs, vol=0.25, decay=None):
+    """A struck bell: a few inharmonic partials, the high ones dying first."""
+    n, out = _n(secs), []
+    parts = ((1.0, 1.0, 1.0), (2.76, 0.45, 0.55), (5.4, 0.25, 0.3), (8.93, 0.12, 0.2))
     for i in range(n):
         t = i / RATE
-        f = freq + slide * (i / n)
-        phase += 2 * math.pi * f / RATE
-        if wave == "square":
-            v = 1.0 if math.sin(phase) >= 0 else -1.0
-        elif wave == "noise":
-            v = random.uniform(-1, 1)
-        else:
-            v = math.sin(phase) + 0.4 * math.sin(2.01 * phase)       # a bell: two partials
-        out.append(v * vol * math.exp(-decay * t))
+        v = 0.0
+        for mult, amp, life in parts:
+            v += amp * math.sin(2 * math.pi * freq * mult * t) * math.exp(-t / (secs * life))
+        out.append(v * vol * min(1.0, t / 0.002))
     return out
 
 
-def _seq(*parts):
-    return [s for p in parts for s in p]
+def _tone(f0, f1, secs, vol=0.3, kind="tri", decay=None, vibrato=0.0):
+    """A tone gliding from f0 to f1 Hz. kind: sine, tri, square, saw."""
+    n, out, ph = _n(secs), [], 0.0
+    for i in range(n):
+        f = f0 + (f1 - f0) * i / n
+        if vibrato:
+            f *= 1 + vibrato * math.sin(2 * math.pi * 5.5 * i / RATE)
+        ph = (ph + f / RATE) % 1.0
+        if kind == "sine":
+            v = math.sin(2 * math.pi * ph)
+        elif kind == "square":
+            v = 0.7 if ph < 0.5 else -0.7
+        elif kind == "saw":
+            v = 2 * ph - 1
+        else:
+            v = 4 * abs(ph - 0.5) - 1
+        out.append(v * vol * _env(i, n, decay=decay))
+    return out
 
 
-def _build():
-    random.seed(7)
-    rest = lambda secs: [0.0] * int(RATE * secs)
+def _noise(secs, vol=0.3, lo=0.0, hi=1.0, sweep=None, decay=None, crackle=0.0):
+    """Filtered noise. lo/hi are one-pole filter amounts (0..1); sweep=(start, end) moves the lowpass."""
+    n, out, lp, lp2 = _n(secs), [], 0.0, 0.0
+    for i in range(n):
+        x = random.uniform(-1, 1)
+        if crackle and random.random() > crackle:
+            x *= 0.08                                       # mostly quiet, with sharp pops: electricity
+        a = hi if not sweep else sweep[0] + (sweep[1] - sweep[0]) * i / n
+        lp += a * (x - lp)
+        lp2 += lo * (lp - lp2)
+        out.append((lp - lp2) * vol * _env(i, n, decay=decay))
+    return out
+
+
+def _mix(*layers):
+    n = max(len(l) for l in layers)
+    return [sum(l[i] for l in layers if i < len(l)) for i in range(n)]
+
+
+def _seq(*parts, gap=0.0):
+    out = []
+    for p in parts:
+        out += p + [0.0] * _n(gap)
+    return out
+
+
+def _effects(k):
+    """Every effect, at pitch factor k (the takes differ by a few percent)."""
     return {
-        "jump": _tone(330, 0.12, slide=330, decay=10),
-        "tick": _tone(1200, 0.03, vol=0.15, decay=40),
-        "found": _seq(_tone(660, 0.08), _tone(880, 0.08), _tone(1320, 0.18, decay=8)),
-        "nothing": _seq(_tone(260, 0.09, vol=0.25), _tone(200, 0.14, vol=0.25)),
-        "caught": _seq(_tone(0, 0.12, wave="noise", vol=0.4, decay=12), _tone(440, 0.4, slide=-330, decay=4)),
-        "ding": _tone(988, 0.7, wave="bell", vol=0.3, decay=5),
-        "locked": _tone(110, 0.3, vol=0.3, decay=3),
-        "win": _seq(_tone(523, 0.12), _tone(659, 0.12), _tone(784, 0.12), rest(0.04), _tone(1047, 0.5, decay=3)),
-        "lose": _seq(_tone(392, 0.2), _tone(330, 0.2), _tone(262, 0.6, decay=3)),
-        "zap": _tone(0, 0.25, wave="noise", vol=0.3, decay=8),
-        "alarm": _seq(_tone(880, 0.07, vol=0.2), _tone(660, 0.07, vol=0.2)),
-        "lunge": _tone(200, 0.2, slide=400, vol=0.25, decay=6),
+        "jump": _mix(_tone(240 * k, 560 * k, 0.16, 0.22, "tri", decay=0.12), _noise(0.06, 0.06, hi=0.5)),
+        "tick": _noise(0.025, 0.2, lo=0.3, hi=0.9, decay=0.01),
+        "found": _seq(_bell(1319 * k, 0.16, 0.18), _bell(1661 * k, 0.16, 0.18), _bell(1976 * k, 0.16, 0.18),
+                      _bell(2637 * k, 0.9, 0.2)),
+        "nothing": _seq(_mix(_tone(170 * k, 90 * k, 0.12, 0.35, "sine", decay=0.08), _noise(0.02, 0.2, hi=0.6)),
+                        _mix(_tone(130 * k, 70 * k, 0.16, 0.35, "sine", decay=0.1), _noise(0.02, 0.15, hi=0.5))),
+        "caught": _mix(_seq(*[_tone(880 * k, 620 * k, 0.16, 0.16, "square") for _ in range(3)]),
+                       _noise(0.5, 0.18, hi=0.35, decay=0.5)),
+        "ding": _seq(_bell(784 * k, 0.55, 0.22), _bell(659 * k, 1.2, 0.22)),
+        "locked": _seq(_tone(196 * k, 190 * k, 0.16, 0.22, "square", vibrato=0.04), _tone(147 * k, 140 * k, 0.32, 0.22, "square", vibrato=0.04),
+                       gap=0.05),
+        "win": _mix(_seq(_bell(1047 * k, 0.18, 0.16), _bell(1319 * k, 0.18, 0.16), _bell(1568 * k, 0.18, 0.16),
+                         _bell(2093 * k, 1.4, 0.2)), _tone(262 * k, 262 * k, 2.0, 0.08, "tri", decay=2.0)),
+        "lose": _seq(_tone(392 * k, 380 * k, 0.4, 0.2, "sine", vibrato=0.02), _tone(330 * k, 320 * k, 0.4, 0.2, "sine", vibrato=0.02),
+                     _tone(262 * k, 230 * k, 1.1, 0.2, "sine", vibrato=0.03)),
+        "zap": _mix(_noise(0.3, 0.5, lo=0.2, hi=0.9, crackle=0.7, decay=0.3), _tone(120 * k, 118 * k, 0.3, 0.15, "saw", decay=0.3)),
+        "alarm": _tone(1100 * k, 700 * k, 0.22, 0.14, "sine", decay=0.25, vibrato=0.12),
+        "lunge": _noise(0.3, 0.45, sweep=(0.02, 0.6), decay=0.35),
+        "click": _seq(_noise(0.012, 0.25, lo=0.4, hi=0.95, decay=0.006), _noise(0.012, 0.18, lo=0.4, hi=0.95, decay=0.006), gap=0.03),
     }
+
+
+def _hum_wave():
+    """Two seconds of building at night: mains hum and a buzzing fluorescent tube. Whole cycles, so it loops clean."""
+    n, out, lp = _n(2.0), [], 0.0
+    for i in range(n):
+        t = i / RATE
+        lp += 0.02 * (random.uniform(-1, 1) - lp)
+        buzz = (2 * ((120 * t) % 1.0) - 1) * (0.5 + 0.5 * math.sin(2 * math.pi * 0.5 * t))
+        out.append(0.05 * math.sin(2 * math.pi * 60 * t) + 0.025 * math.sin(2 * math.pi * 120 * t) + 0.012 * buzz + 0.04 * lp)
+    return out
+
+
+def _to_sound(samples):
+    freq, _size, channels = pygame.mixer.get_init()
+    if freq != RATE:
+        step = RATE / freq
+        samples = [samples[int(i * step)] for i in range(int(len(samples) / step))]
+    pcm = array("h", (int(max(-1.0, min(1.0, s)) * 32767) for s in samples for _ in range(channels)))
+    return pygame.mixer.Sound(buffer=pcm.tobytes())
+
+
+def _make_all():
+    global _hum
+    random.seed(11)
+    try:
+        _hum = _to_sound(_hum_wave())
+        if _want_hum:
+            _hum.play(loops=-1)
+        for take in range(TAKES):
+            k = 1.0 + (take - 1) * 0.035
+            for name, samples in _effects(k).items():
+                _sounds.setdefault(name, []).append(_to_sound(samples))
+    except Exception:
+        pass
 
 
 def _init():
@@ -65,20 +163,27 @@ def _init():
     try:
         if not pygame.mixer.get_init():
             pygame.mixer.init(RATE, -16, 1, 512)
-        freq, _size, channels = pygame.mixer.get_init()
-        for name, samples in _build().items():
-            if freq != RATE:                                   # the mixer runs at another rate: resample simply
-                step = RATE / freq
-                samples = [samples[int(i * step)] for i in range(int(len(samples) / step))]
-            pcm = array("h", (int(max(-1.0, min(1.0, s)) * 32767) for s in samples for _ in range(channels)))
-            _sounds[name] = pygame.mixer.Sound(buffer=pcm.tobytes())
         _ready = True
+        threading.Thread(target=_make_all, daemon=True).start()
     except Exception:                                          # no audio device: play nothing, never crash
         _ready = False
     return _ready
 
 
 def play(name):
-    """Play one effect by name. Unknown names and machines without sound do nothing."""
-    if _init() and name in _sounds:
-        _sounds[name].play()
+    """Play one effect by name (one of its takes, at random). Unknown names, effects still being made, and
+    machines without sound do nothing."""
+    if _init() and _sounds.get(name):
+        random.choice(_sounds[name]).play()
+
+
+def ambient(on=True):
+    """The building's hum: on loops it quietly under everything, off stops it."""
+    global _want_hum
+    _want_hum = on
+    if not _init() or _hum is None:
+        return
+    _hum.stop()
+    if on:
+        _hum.set_volume(0.6)
+        _hum.play(loops=-1)

@@ -250,7 +250,8 @@ class Room:
         self.draw_foreground(surf)
 
     def draw_dark(self, surf, player):
-        """After hours: the room is dark except where light falls. Light comes from the player's flashlight, every
+        """After hours: the room is dark except where light falls. Light comes from the player's flashlight (when
+        player.light_on; the game toggles it with F), every
         CeilingLight in self.decor, every (x, y, radius) in self.lights, and a glow around each hazard (brighter
         while it's firing: a zapper that's on, a robot in mode "fire")."""
         shade = getattr(self, "_shade", None)
@@ -273,9 +274,13 @@ class Room:
             radius = max(r.width, r.height) // 2 + (60 if hot else 26)
             cut(_light("glow", radius), (r.centerx - radius, r.centery - radius))
         pr = player.rect
-        g = _light("glow", 120)
-        cut(g, (pr.centerx - 120, pr.centery - 120))
-        beam = _light("beam_r" if player.facing > 0 else "beam_l")
-        bx = pr.centerx if player.facing > 0 else pr.centerx - beam.get_width()
-        cut(beam, (bx, pr.top + 12 - beam.get_height() // 2))
+        if getattr(player, "light_on", True):           # the flashlight (F): a glow and a beam the way you face
+            g = _light("glow", 120)
+            cut(g, (pr.centerx - 120, pr.centery - 120))
+            beam = _light("beam_r" if player.facing > 0 else "beam_l")
+            bx = pr.centerx if player.facing > 0 else pr.centerx - beam.get_width()
+            cut(beam, (bx, pr.top + 12 - beam.get_height() // 2))
+        else:                                           # light off: just enough to see yourself
+            g = _light("glow", 46)
+            cut(g, (pr.centerx - 46, pr.centery - 46))
         surf.blit(shade, (0, 0))

@@ -28,6 +28,8 @@ def main():
             if e.type == pygame.QUIT or (e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE):
                 pygame.quit()
                 return 0
+            if e.type == pygame.KEYDOWN and e.key == pygame.K_f:
+                game.toggle_light()
             if e.type == pygame.KEYDOWN and e.key in (pygame.K_SPACE, pygame.K_RETURN):
                 start = True
         dt = min(clock.tick(C.FPS) / 1000.0, 1 / 30)

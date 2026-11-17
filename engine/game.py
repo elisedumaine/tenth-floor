@@ -31,6 +31,7 @@ class Game:
 
     # --- state ---------------------------------------------------------------------------------
     def reset(self):
+        sound.ambient(True)        # the building at night, humming under everything
         self.rooms = {}            # {(floor number, index west to east): Room}
         self.count = {}            # {floor number: how many rooms}
         floors = [(1, [lobby.LEFT, lobby.RIGHT], lobby.AUTHOR)]
@@ -59,6 +60,13 @@ class Game:
             self.enter((1, self.count[1] - 1), "left")        # at the security desk, its left side: security is between you and the East elevator
             self.state = "title"
 
+    def toggle_light(self):
+        """F: the flashlight on or off. It stays as you left it from room to room."""
+        self.flashlight = not getattr(self, "flashlight", False)
+        if self.player is not None:
+            self.player.light_on = self.flashlight
+        sound.play("click")
+
     def say(self, text, seconds=2.0):
         self.toast, self.toast_t = text, seconds
 
@@ -79,11 +87,15 @@ class Game:
         x = C.W - 40 - Player.W if edge == "right" else 40
         self.player = Player(x, C.FLOOR_Y)
         self.player.facing = -1 if edge == "right" else 1
+        self.player.light_on = getattr(self, "flashlight", False)
         self.state = "room"
         room = self.rooms[door]
         n = self.count[door[0]]
         where = f"  ({door[1] + 1} of {n})" if n > 2 else ""
         self.say(room.title if door[0] == 1 else f"{room.title}{where}  -  by {room.author}", 2.5)
+        if room.dark > 0.5 and not getattr(self, "flashlight", False) and not getattr(self, "told_light", False):
+            self.told_light = True                       # once a game: the first dark room
+            self.say(f"Too dark? Press F for your flashlight   ({room.title})", 3.5)
 
     def board(self, shaft, floor):
         self.state = "elevator"

@@ -96,21 +96,67 @@ def draw_artwork(img, style):
 
 
 class ProjectorScreen:
-    """Decor: the pull-down screen in the lecture room, showing today's slide."""
+    """Decor: the pull-down screen in the lecture room. The professor keeps clicking to the wrong slide."""
+
+    SLIDES = ["mondrian", "shades", "mondrian", "cat", "mondrian", "blank"]
 
     def __init__(self, x, y, w, h):
         self.pos = (x, y)
-        self.image = pygame.Surface((w, h + 14))
-        self.image.fill((70, 74, 88))
-        pygame.draw.rect(self.image, (60, 60, 66), (0, 0, w, 10))                 # the roller
-        pygame.draw.rect(self.image, (238, 238, 232), (4, 10, w - 8, h))
-        slide = pygame.Surface((int(w * 0.6), int(h * 0.75)))
-        draw_artwork(slide, "mondrian")
-        self.image.blit(slide, (w // 2 - slide.get_width() // 2, 10 + h // 2 - slide.get_height() // 2))
-        self.image.set_colorkey((70, 74, 88))
+        self.t = 0.0
+        self.near = False
+        self.images = []
+        font = pygame.font.Font(None, 20)
+        for kind in self.SLIDES:                    # every slide drawn once
+            img = pygame.Surface((w, h + 14))
+            img.fill((70, 74, 88))
+            pygame.draw.rect(img, (60, 60, 66), (0, 0, w, 10))                     # the roller
+            pygame.draw.rect(img, (238, 238, 232), (4, 10, w - 8, h))
+            slide = pygame.Surface((int(w * 0.6), int(h * 0.75)))
+            if kind == "blank":
+                slide.fill((238, 238, 232))
+                for i, line in enumerate(("This slide intentionally", "left blank.")):
+                    text = font.render(line, True, C.INK)
+                    slide.blit(text, (slide.get_width() // 2 - text.get_width() // 2, 44 + i * 20))
+            elif kind == "cat":                     # the professor's cat, in a beret
+                draw_cat(slide)
+            else:
+                draw_artwork(slide, "mona lisa" if kind == "shades" else kind)
+                if kind == "shades":                # the Mona Lisa, but cool
+                    sw, sh = slide.get_size()
+                    for ex in (0.44, 0.56):
+                        pygame.draw.rect(slide, (10, 10, 10), (sw * ex - 9, sh * 0.27, 18, 9), border_radius=3)
+                    pygame.draw.line(slide, (10, 10, 10), (sw * 0.44, sh * 0.3), (sw * 0.56, sh * 0.3), 2)
+            img.blit(slide, (w // 2 - slide.get_width() // 2, 10 + h // 2 - slide.get_height() // 2))
+            img.set_colorkey((70, 74, 88))
+            self.images.append(img)
+
+    def update(self, dt, player):
+        self.t += dt
 
     def draw(self, surf):
-        surf.blit(self.image, self.pos)
+        surf.blit(self.images[int(self.t / 3.5) % len(self.images)], self.pos)
+
+    def draw_bubble(self, surf):
+        pass
+
+
+def draw_cat(img):
+    """A ginger cat in a black beret: the professor's cat, Pablo Catsso."""
+    w, h = img.get_size()
+    img.fill((200, 220, 230))
+    cx, cy = w // 2, int(h * 0.58)
+    pygame.draw.polygon(img, (230, 140, 60), [(cx - 34, cy - 14), (cx - 26, cy - 46), (cx - 8, cy - 26)])   # ears
+    pygame.draw.polygon(img, (230, 140, 60), [(cx + 34, cy - 14), (cx + 26, cy - 46), (cx + 8, cy - 26)])
+    pygame.draw.ellipse(img, (230, 140, 60), (cx - 38, cy - 30, 76, 60))                                    # head
+    pygame.draw.ellipse(img, (20, 20, 24), (cx - 30, cy - 52, 56, 22))                                      # beret
+    pygame.draw.line(img, (20, 20, 24), (cx, cy - 52), (cx + 2, cy - 58), 3)
+    for ex in (-14, 14):
+        pygame.draw.ellipse(img, (120, 200, 90), (cx + ex - 6, cy - 10, 12, 12))
+        pygame.draw.line(img, C.INK, (cx + ex, cy - 9), (cx + ex, cy + 1), 2)
+    pygame.draw.polygon(img, (240, 130, 140), [(cx - 4, cy + 6), (cx + 4, cy + 6), (cx, cy + 11)])          # nose
+    for dy in (8, 13):                                                                                       # whiskers
+        pygame.draw.line(img, C.INK, (cx - 10, cy + dy), (cx - 34, cy + dy - 4), 1)
+        pygame.draw.line(img, C.INK, (cx + 10, cy + dy), (cx + 34, cy + dy - 4), 1)
 
 
 class LightTable(Furniture):
@@ -708,8 +754,12 @@ class MonaLisa(Painting):
 
     def draw(self, surf):
         super().draw(surf)
+        wink = self.t % 6.0 < 0.35                  # now and then, a wink
         for ex in (0.44, 0.56):                     # repaint the eyes, looking at you
             cx, cy = int(self.x + self.w * ex), int(self.y + self.h * 0.3)
+            if wink and ex == 0.44:
+                pygame.draw.arc(surf, (60, 40, 30), (cx - 4, cy - 2, 8, 6), 0.2, 2.9, 2)
+                continue
             pygame.draw.ellipse(surf, (236, 226, 200), (cx - 4, cy - 2, 8, 5))
             pygame.draw.circle(surf, (50, 34, 24), (cx + round(self.look[0] * 2), cy + round(self.look[1])), 2)
         if self.near:                               # the famous smile, a bit wider
@@ -1055,6 +1105,33 @@ class GiantVanGogh:
         surf.blit(b, (self.x + self.W // 2 - b.get_width() // 2, self.y + self.H - 40))
 
 
+class Voice:
+    """Something that isn't a person but talks anyway (a sculpture). Put it in self.people only, not in decor:
+    it draws nothing, it just shows a speech bubble at (x, y) when you come close."""
+
+    def __init__(self, x, y, lines, reach=70):
+        self.x, self.y, self.reach = x, y, reach
+        self.t = 0.0
+        self.near = False
+        font = pygame.font.Font(None, 20)
+        self.bubbles = [make_bubble(font, line) for line in lines]
+
+    def update(self, dt, player):
+        self.t += dt
+        self.near = (player is not None and abs(player.rect.centerx - self.x) < self.reach
+                     and -40 < player.rect.bottom - self.y < 160)
+
+    def draw(self, surf):
+        pass
+
+    def draw_bubble(self, surf):
+        if not self.near:
+            return
+        b = self.bubbles[int(self.t / 2.8) % len(self.bubbles)]
+        bx = max(4, min(C.W - b.get_width() - 4, self.x - b.get_width() // 2))
+        surf.blit(b, (bx, self.y - 8 - b.get_height()))
+
+
 class PeopleRoom(Room):
     """A room with people in it: they move and talk; their speech bubbles go over everything."""
 
@@ -1091,6 +1168,7 @@ class ReadingRoom(PeopleRoom):
                    lines=["My art history paper is due at 9 AM...", "Leonardo took 16 years on the Mona Lisa?!"]),
         ]
         self.decor += self.people
+        self.people.append(Voice(290, 400, ["2,000 years old and I still don't have a body.", "Nice nose. Mine fell off twice."]))
 
     def draw_background(self, surf):
         surf.fill((92, 72, 60))                                   # warm wood paneling
@@ -1124,6 +1202,8 @@ class SlideArchive(PeopleRoom):
                 name="Woof! (the archivist's dog)", speed=40),
         ]
         self.decor += self.people
+        self.people += [Voice(132, 396, ["I've been thinking for 140 years...", "...and I still forgot why I came in here."]),
+                        Voice(278, 336, ["Handle with care.", "Get it? I have two handles."], reach=40)]
         self.hazards.append(FloorLaser(200, 520, on_time=1.2, off_time=1.6))
         self.hazards.append(Crusher(735, y_top=80, y_bottom=200, w=50, h=40))
 
@@ -1165,6 +1245,10 @@ class ConservationStudio(PeopleRoom):
                    lines=["Is this a real Van Gogh?", "I'm the museum's night guide!"]),
         ]
         self.decor += self.people
+        self.people += [Voice(435, 390, ["Has anyone seen my arm?", "It was right here. With my discus."], reach=40),
+                        Voice(520, 350, ["Can someone pass me my head?", "I lost it over a Goliath joke."], reach=40),
+                        Voice(605, 280, ["No head, one wing. Still winning.", "They call me VICTORY, you know."], reach=40),
+                        Voice(685, 310, ["Stop staring at my missing eye.", "3,300 years and not one wrinkle."], reach=40)]
 
     def draw_background(self, surf):
         surf.fill((84, 86, 92))                                   # clean, bright workshop walls
@@ -1175,16 +1259,18 @@ class LectureRoom(PeopleRoom):
     title = "Lecture Room"
 
     def build(self):
-        self.decor += [Sign(380, 46, "LECTURE ROOM", (240, 220, 180)), ProjectorScreen(120, 90, 260, 170),
+        self.decor += [Sign(380, 46, "LECTURE ROOM", (240, 220, 180)),
                        Poster(430, 100, "ART HIST", (130, 60, 70), w=96), CeilingLight(620), CeilingLight(820)]
         self.platforms.append(Platform(560, 440, 140))      # the tiered seats
         self.platforms.append(Platform(690, 380, 140))
         self.furniture += [Plant(100, C.FLOOR_Y), Lectern(300, C.FLOOR_Y), Seats(575, 440), Seats(710, 380),
                            Sculpture(480, C.FLOOR_Y, "venus")]
+        self.screen = ProjectorScreen(120, 90, 260, 170)
         self.people = [
             LivingScream(545, 110, 80, 110),
             Person(250, C.FLOOR_Y, "talk", shirt=(70, 70, 80), hair=(90, 90, 90), always=True,
-                   lines=["...and Mondrian painted this in 1921.", "Notice the primary colors.", "Quiz on Thursday!"]),
+                   lines=["...and Mondrian painted this in 1921.", "Wait, that's my cat. Wrong slide.",
+                          "Notice the primary colors.", "Who put sunglasses on the Mona Lisa?!", "Quiz on Thursday!"]),
             Person(575, 430, "stand", shirt=(200, 140, 60), hair=(60, 40, 20), seated=True, chair=False, facing=-1,
                    lines=["Is this on the exam?"]),
             Person(643, 430, "sleep", shirt=(90, 110, 170), hair=(160, 110, 50), seated=True, chair=False, facing=-1,
@@ -1193,6 +1279,8 @@ class LectureRoom(PeopleRoom):
                    chair=False, facing=-1, lines=["I love this slide!"]),
         ]
         self.decor += self.people
+        self.decor.insert(1, self.screen)
+        self.people += [self.screen, Voice(505, 330, ["Has anyone seen my arms?", "I'd wave hello, but..."], reach=50)]
         self.hazards.append(Drone(450, y_top=300, y_bottom=C.FLOOR_Y, speed=80))
         self.hazards.append(PatrolBot(700, C.FLOOR_Y, left=540, right=850, speed=60))
 

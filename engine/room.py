@@ -135,11 +135,53 @@ class Furniture:
         pygame.draw.line(surf, C.INK, (self.rect.left + 6, mid), (self.rect.right - 6, mid), 2)
 
 
+_LIGHTS = {}
+
+
+def _light(kind, radius=0):
+    """Light shapes, made once: alpha 0 where it's brightest, rising to 255 at the edge. Cut into the dark with
+    BLEND_RGBA_MIN."""
+    key = (kind, radius)
+    if key in _LIGHTS:
+        return _LIGHTS[key]
+    if kind == "glow":
+        img = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+        img.fill((6, 8, 22, 255))
+        for r in range(radius, 0, -2):
+            pygame.draw.circle(img, (6, 8, 22, int(255 * (r / radius) ** 1.6)), (radius, radius), r)
+    elif kind == "lamp":                              # a ceiling lamp's cone, down to the floor
+        w, h = 300, max(60, C.FLOOR_Y - 80)
+        img = pygame.Surface((w, h), pygame.SRCALPHA)
+        img.fill((6, 8, 22, 255))
+        for y in range(0, h, 2):
+            half = 12 + (w // 2 - 12) * y / h
+            for x in range(int(w // 2 - half), int(w // 2 + half), 2):
+                edge = abs(x - w // 2) / half
+                a = int(255 * min(1.0, 0.25 + 0.75 * edge ** 2 + 0.35 * (y / h)))
+                pygame.draw.rect(img, (6, 8, 22, a), (x, y, 2, 2))
+    else:                                             # the flashlight beam, pointing right (or flipped left)
+        if kind == "beam_l":
+            img = pygame.transform.flip(_light("beam_r"), True, False)
+        else:
+            w, h = 340, 220
+            img = pygame.Surface((w, h), pygame.SRCALPHA)
+            img.fill((6, 8, 22, 255))
+            for x in range(0, w, 2):
+                half = 10 + (h // 2 - 10) * x / w
+                for y in range(int(h // 2 - half), int(h // 2 + half), 2):
+                    edge = abs(y - h // 2) / half
+                    a = int(255 * min(1.0, max(edge ** 1.5, x / w) ** 1.2))
+                    pygame.draw.rect(img, (6, 8, 22, a), (x, y, 2, 2))
+    _LIGHTS[key] = img
+    return img
+
+
 class Room:
     """Subclass this. Set title, fill build(). The author comes from your floor's AUTHOR."""
 
     title = "Untitled room"
     author = "nobody yet"
+    dark = 0.6            # after hours: 0 = fully lit, 1 = pitch black. Your flashlight, lamps and robots light it up.
 
     def __init__(self):
         self.platforms = []   # Platform objects (the ground floor is added for you)
@@ -147,6 +189,7 @@ class Room:
         self.furniture = []   # Furniture objects; one holds_piece=True on the whole floor
         self.hazards = []     # anything with .rect, .update(dt, room, player), .draw(surf)
         self.decor = []       # wall things that are only looked at: anything with .draw(surf) (see engine/kit/)
+        self.lights = []      # extra lamps of your own: (x, y, radius) circles of light in the dark
         self.spawn_x = 40     # where the player appears, on the ground, coming from the elevator
         self.ground = Platform(0, C.FLOOR_Y, C.W)
         self.time = 0.0
@@ -202,4 +245,37 @@ class Room:
         for h in self.hazards:
             h.draw(surf)
         player.draw(surf)
+        if self.dark > 0:
+            self.draw_dark(surf, player)
         self.draw_foreground(surf)
+
+    def draw_dark(self, surf, player):
+        """After hours: the room is dark except where light falls. Light comes from the player's flashlight, every
+        CeilingLight in self.decor, every (x, y, radius) in self.lights, and a glow around each hazard (brighter
+        while it's firing: a zapper that's on, a robot in mode "fire")."""
+        shade = getattr(self, "_shade", None)
+        if shade is None:
+            shade = self._shade = pygame.Surface((C.W, C.H), pygame.SRCALPHA)
+        shade.fill((6, 8, 22, int(255 * min(1.0, self.dark))))
+        cut = lambda img, pos: shade.blit(img, pos, special_flags=pygame.BLEND_RGBA_MIN)
+        for d in self.decor:
+            if type(d).__name__ == "CeilingLight":
+                cone = _light("lamp")
+                cut(cone, (d.x - cone.get_width() // 2, 34 + getattr(d, "cord", 50)))
+        for x, y, radius in self.lights:
+            g = _light("glow", radius)
+            cut(g, (x - radius, y - radius))
+        for h in self.hazards:
+            r = getattr(h, "rect", None)
+            if not r or not r.width:
+                continue
+            hot = getattr(h, "on", False) or getattr(h, "mode", None) == "fire"
+            radius = max(r.width, r.height) // 2 + (60 if hot else 26)
+            cut(_light("glow", radius), (r.centerx - radius, r.centery - radius))
+        pr = player.rect
+        g = _light("glow", 120)
+        cut(g, (pr.centerx - 120, pr.centery - 120))
+        beam = _light("beam_r" if player.facing > 0 else "beam_l")
+        bx = pr.centerx if player.facing > 0 else pr.centerx - beam.get_width()
+        cut(beam, (bx, pr.top + 12 - beam.get_height() // 2))
+        surf.blit(shade, (0, 0))

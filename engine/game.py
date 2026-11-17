@@ -8,7 +8,7 @@ import random
 
 import pygame
 
-from . import building, config as C, lobby, screens
+from . import building, config as C, lobby, screens, sound
 from .player import Keys, Player
 
 
@@ -56,7 +56,7 @@ class Game:
             self.enter((next(iter(self.where)), 0), "left")
         else:
             self.state = "title"
-            self.enter((1, self.count[1] - 1), "right")       # at the security desk
+            self.enter((1, self.count[1] - 1), "left")        # at the security desk, its left side: security is between you and the East elevator
             self.state = "title"
 
     def say(self, text, seconds=2.0):
@@ -109,6 +109,7 @@ class Game:
             if self.clock <= 0:
                 self.clock = 0
                 self.state = "lost"
+                sound.play("lose")
                 return
         if self.state == "elevator":
             self.step_elevator(dt, keys)
@@ -130,6 +131,7 @@ class Game:
             nxt = self.floor + self.moving * speed * dt
             if (self.moving > 0 and nxt >= target) or (self.moving < 0 and nxt <= target):
                 self.floor, self.moving = float(target), 0
+                sound.play("ding")
             else:
                 self.floor = nxt
             return
@@ -143,7 +145,10 @@ class Game:
         if f == building.GOAL:
             if len(self.code) >= self.needed:
                 self.state = "won"
+                sound.play("win")
             else:
+                if self.toast_t <= 0:
+                    sound.play("locked")
                 self.say(f"MFA Computer Arts is locked: {len(self.code)} of {self.needed} code digits", 1.5)
         elif f in self.count:
             if self.shaft == "west":
@@ -151,22 +156,49 @@ class Game:
             else:
                 self.enter((f, self.count[f] - 1), "right")
 
+    def hear(self, room, p):
+        """Robots make noise without knowing about sound: listen for what they do. A zapper switching on near you,
+        a robot firing (mode "fire"), lunging (mode "lunge") or spotting you (alert) each make a sound."""
+        heard = getattr(self, "_heard", {})
+        now = {}
+        for h in room.hazards:
+            on, mode, alert = getattr(h, "on", None), getattr(h, "mode", None), getattr(h, "alert", None)
+            was = heard.get(id(h), (on, mode, alert))
+            near = hasattr(h, "rect") and abs(h.rect.centerx - p.rect.centerx) < 320
+            if on and not was[0] and near:
+                sound.play("zap")
+            if mode != was[1] and mode == "fire":
+                sound.play("zap")
+            if mode != was[1] and mode == "lunge":
+                sound.play("lunge")
+            if alert and not was[2]:
+                sound.play("alarm")
+            now[id(h)] = (on, mode, alert)
+        self._heard = now
+
     def step_room(self, dt, keys):
         door = self.here
         f, i = door
         last = self.count[f] - 1
         room, p = self.rooms[door], self.player
         room.tick(dt, p)
+        self.hear(room, p)
+        was_vy = p.vy
         events = p.update(dt, keys, room)
+        if p.vy <= -C.JUMP_SPEED * 0.9 and was_vy > -C.JUMP_SPEED * 0.5:
+            sound.play("jump")
         if "empty" in events:
+            sound.play("nothing")
             self.say("Nothing here", 0.8)
         if "piece" in events and f in self.digit:
+            sound.play("found")
             if self.practice:
                 self.say(f"Code digit found: {self.digit[f]} (practice)")
             else:
                 self.code.append(self.digit[f])
                 self.say(f"Code digit: {self.digit[f]}   ({len(self.code)} of {self.needed})")
         if "dead" in events:
+            sound.play("caught")
             if not self.practice:
                 self.clock -= C.DEATH_PENALTY
             self.say(f"Caught! -{C.DEATH_PENALTY} seconds" if not self.practice else "Caught!")

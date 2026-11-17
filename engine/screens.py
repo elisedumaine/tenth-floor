@@ -114,15 +114,59 @@ def hud(g, surf):
         g.text(surf, g.toast, g.mid, C.PIECE, center=(C.W // 2, y))
 
 
+def _owners():
+    """Claimed pieces from OWNERS.md: [(piece, owner)], skipping open ones and the maintainer's."""
+    import os
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "OWNERS.md")
+    out = []
+    try:
+        for line in open(path, encoding="utf-8"):
+            cells = [c.strip() for c in line.split("|")]
+            if len(cells) >= 5 and cells[1] and cells[1] != "piece" and not set(cells[1]) <= set("-"):
+                owner = cells[2]
+                if owner and owner.lower() != "open" and "maintainer" not in owner:
+                    out.append((cells[1].split(":")[0], owner))
+    except OSError:
+        pass
+    return out
+
+
 def end(g, surf, line, won):
     surf.fill((20, 40, 24) if won else (46, 20, 20))
-    g.text(surf, line, g.big, C.PIECE if won else C.DANGER, center=(C.W // 2, 120))
+    g.text(surf, line, g.big, C.PIECE if won else C.DANGER, center=(C.W // 2, 70))
     if won:
         m, s = divmod(int(g.clock), 60)
         g.text(surf, f"code {' '.join(map(str, g.code))}  -  with {m:02d}:{s:02d} left", g.mid, C.HUD,
-                  center=(C.W // 2, 175))
-    authors = sorted({fl.author for fl in g.floors.values()})
-    g.text(surf, "Floors by", g.mid, (200, 200, 200), center=(C.W // 2, 250))
-    for i, a in enumerate(authors):
-        g.text(surf, a, g.small, C.HUD, center=(C.W // 2, 284 + i * 22))
+               center=(C.W // 2, 118))
+        # the credits roll: every floor, bottom to top, then every piece with an owner
+        if getattr(g, "_won_at", None) is None:
+            g._won_at = pygame.time.get_ticks()
+        rows = [("THE BUILDING", None)]
+        floors = {1: ("Lobby / Flatiron Gallery", "the class"), building.GOAL: ("MFA Computer Arts", "you got in")}
+        floors.update({n: (g.floors[f].name, g.floors[f].author) for n, f in g.where.items()})
+        rows += [(f"{building.label(n)}  {name}", who) for n, (name, who) in sorted(floors.items())]
+        owned = _owners()
+        if owned:
+            rows += [("", None), ("THE PIECES", None)] + owned
+        rows += [("", None), ("Programming for Animators  -  Fall 2026", None)]
+        clip = pygame.Rect(0, 150, C.W, C.H - 190)
+        span = len(rows) * 30 + clip.height                    # once it has all gone by, it starts again
+        y = clip.bottom - ((pygame.time.get_ticks() - g._won_at) / 1000 * 40) % span
+        surf.set_clip(clip)
+        for i, (left, right) in enumerate(rows):
+            ry = int(y + i * 30)
+            if right is None:
+                g.text(surf, left, g.mid, C.PIECE, center=(C.W // 2, ry))
+            else:
+                img_l = g.small.render(left, True, C.HUD)
+                img_r = g.small.render(right, True, (190, 200, 190))
+                surf.blit(img_l, img_l.get_rect(midright=(C.W // 2 - 14, ry)))
+                surf.blit(img_r, img_r.get_rect(midleft=(C.W // 2 + 14, ry)))
+        surf.set_clip(None)
+    else:
+        g._won_at = None
+        authors = sorted({fl.author for fl in g.floors.values()})
+        g.text(surf, "Floors by", g.mid, (200, 200, 200), center=(C.W // 2, 250))
+        for i, a in enumerate(authors):
+            g.text(surf, a, g.small, C.HUD, center=(C.W // 2, 284 + i * 22))
     g.text(surf, "SPACE to play again", g.small, (200, 200, 200), center=(C.W // 2, C.H - 24))

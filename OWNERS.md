@@ -41,6 +41,7 @@ Owner **open** means unclaimed (the maintainer looks after it). The check reads 
 | Security: PatrolBot and Zapper | open | | `engine/bots.py` |
 | Screens: title, elevator view, HUD, win and lose | open | | `engine/screens.py` |
 | The lobby, floor 1: Security Desk and Flatiron Gallery | open | | `engine/lobby.py` |
+| Sound: the game's sound effects, made in code | open | | `engine/sound.py` |
 | The kit's frame and its docs: KIT.md, the catalog picture | open | | `KIT.md` `docs/*` `engine/kit_catalog.py` `engine/kit/__init__.py` `engine/kit/_base.py` |
 
 ### Kit parts (claim one, or add a new one)

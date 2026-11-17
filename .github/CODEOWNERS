@@ -23,6 +23,7 @@
 /engine/bots.py  @rattlesnake-ike
 /engine/screens.py  @rattlesnake-ike
 /engine/lobby.py  @rattlesnake-ike
+/engine/sound.py  @rattlesnake-ike
 /KIT.md  @rattlesnake-ike
 /docs/*  @rattlesnake-ike
 /engine/kit_catalog.py  @rattlesnake-ike
